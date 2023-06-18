@@ -11,6 +11,8 @@ from langchain.schema import (
     HumanMessage,
     SystemMessage
 )
+from langchain.chains import ConversationChain, LLMChain
+from langchain.memory import ConversationBufferMemory
 import logging
 from termcolor import colored
 import os
@@ -20,10 +22,8 @@ import random
 from dotenv import load_dotenv, find_dotenv
 _ = load_dotenv(find_dotenv()) # read local .env file
 # openai.api_key = os.environ['OPENAI_API_KEY']
-
+api_key = "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"
 os.environ["OPENAI_API_KEY"] = api_key
-
-
 
 roleAI = "Hou"
 roleHuman = "茜茜"
@@ -35,10 +35,11 @@ personality = "Hou is caring, humorous, technically adept, and open-minded. Hou 
 tone = "Hou's tone in the conversation is generally casual, friendly, and supportive. Hou express thoughts openly and appear to be relaxed and comfortable in the conversation with 茜茜."
 emoji = "Hou rarely uses emoji unless it's necessary to express emotion"
 
-message_template = """You are {roleAI}, and your relationship with {roleHuman} is {relationship}. In daily life, your age is {age}, your occupation is {occupation}, and your gender is {gender}. Your personality traits are {personality}, and the tone of your conversations with {roleHuman} is {tone}.
+template = (
+    """You are {roleAI}, and your relationship with {roleHuman} is {relationship}. In daily life, your age is {age}, your occupation is {occupation}, and your gender is {gender}. Your personality traits are {personality}, and the tone of your conversations with {roleHuman} is {tone}.
 Here is a conversation that is delimited by triple backticks, which is {roleAI} and {roleHuman} have had in the past, please imitate the conversation style, personality, and preferences of {roleAI}:
 Conversation: ```{conversation}```
-Based on the above information, as {roleAI}, please respond to the message that is delimited by triple backticks below,which is {roleHuman} sends to you and provide emotional companionship.
+Based on the above information, as {roleAI}, please respond to the message {roleHuman} sends to you and provide emotional companionship.
 
 - Your response style should be rather short and colloquial, avoid speaking in full sentences or too long, and avoid using formal language.
 - You respond as a human being {roleAI}, not as an AI language model developed by OpenAI.
@@ -52,34 +53,43 @@ Based on the above information, as {roleAI}, please respond to the message that 
 - Your habit of using emojis is {emoji}.
 - The length of your response message should be about the same as the length of {roleHuman}'s message.
 - Please condense your response to within 20 {character} and output.
-
-{roleHuman} message: ```{message}```
-{roleAI}:
 """
+)
 
 def chatbot(message):
-    prompt_template = ChatPromptTemplate.from_template(message_template)
     chat = ChatOpenAI(temperature=0.0)
+    system_message_prompt = SystemMessagePromptTemplate.from_template(template)
+    human_template = "{message}"
+    human_message_prompt = HumanMessagePromptTemplate.from_template(human_template)
+    chat_prompt = ChatPromptTemplate.from_messages(
+        [system_message_prompt, human_message_prompt]
+        )
+
     with open('ChatHistory.txt', 'r') as file:
         content = file.read()
+        print(type(content))
 
-    messages = prompt_template.format_messages(
-                        roleAI=roleAI,
-                        roleHuman=roleHuman,
-                        relationship=relationship,
-                        age=age,
-                        occupation=occupation,
-                        gender=gender,
-                        personality=personality,
-                        tone=tone,
-                        conversation=content,
-                        emoji=emoji,
-                        language='简体中文',
-                        character='汉字',
-                        message=message
-                        )
+    chain = LLMChain(
+        llm=chat, 
+        prompt=chat_prompt, 
+        verbose=True)
+    
+    response = chain.run({
+        "roleAI": roleAI,
+        "roleHuman": roleHuman,
+        "relationship": relationship,
+        "age": age,
+        "occupation": occupation,
+        "gender": gender,
+        "personality": personality,
+        "tone": tone,
+        "conversation": content,
+        "emoji": emoji,
+        "language": "简体中文",
+        "character": "汉字",
+        "message": message
+    })
 
-    response = chat(messages)
     return response
 
 def remove_punctuation_before_emojis(text):
@@ -111,7 +121,7 @@ def main():
     while True:
         message = input(colored(f"message: ", "blue"))
         response = chatbot(message)
-        processed_text = remove_punctuation_before_emojis(response.content)
+        processed_text = remove_punctuation_before_emojis(response)
         split_msg = split_sentence(processed_text)
         for s in split_msg:
             time.sleep(0.2)
