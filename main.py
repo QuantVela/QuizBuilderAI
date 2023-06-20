@@ -4,9 +4,10 @@ from langchain.chains import ConversationChain, LLMChain
 from langchain.memory import ConversationBufferMemory, ChatMessageHistory
 from langchain.vectorstores import Qdrant
 from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.memory import ConversationBufferWindowMemory
+from langchain.memory import ConversationBufferWindowMemory, VectorStoreRetrieverMemory
 from langchain.text_splitter import CharacterTextSplitter, RecursiveCharacterTextSplitter
 from langchain.document_loaders import TextLoader
+from datetime import datetime
 import logging
 from termcolor import colored
 import os
@@ -14,19 +15,21 @@ import time
 import re
 import random
 import orjson
+import qdrant_client
 from dotenv import load_dotenv, find_dotenv
+_ = load_dotenv(find_dotenv()) 
 
-_ = load_dotenv(find_dotenv()) # read local .env file
-# openai.api_key = os.environ['OPENAI_API_KEY']
 api_key = "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"
 os.environ["OPENAI_API_KEY"] = api_key
 QDRANT_HOST = "aifriend"
 QDRANT_URL = "https://99d3f2ff-e74b-49e0-9bb9-04977ac947d3.us-east-1-0.aws.cloud.qdrant.io"
 QDRANT_API_KEY = "9i1v-GcgQygerPq9mqh9WxqlJqXuU2YJ7fGU_ubHOzpgku48s7eknw"
 
+history_list = []
+
 template = (
     """You are {roleAI}, and your relationship with {roleHuman} is {relationship}. In daily life, your age is {age}, your occupation is {occupation}, and your gender is {gender}. Your personality traits are {personality}, and the tone of your conversations with {roleHuman} is {tone}.
-The following is a conversation which is {roleAI} and {roleHuman} have had in the past, please imitate the conversation style, personality, and preferences of {roleAI}:
+The following is a conversation which is {roleAI} and {roleHuman} have had in the past, please imitate the conversation style, personality, habit, and preferences of {roleAI}:
 Relevant pieces of previous conversation history:
 Conversation: {{conversation}}
 (You do not need to use these pieces of information if not relevant)
@@ -46,7 +49,10 @@ Based on the above information, as {roleAI}, please respond to the message {role
 - The length of your response message should be about the same as the length of {roleHuman}'s message.
 - Please condense your response to within 20 {character} and output.
 
-{{history}}
+The following is chat history between you and {roleHuman}:
+{{chat_history}}
+(You do not need to use these pieces of information if not relevant)
+
 Current conversation:
 {roleHuman}: {{message}}
 {roleAI}:
@@ -58,23 +64,25 @@ def read_botset(path:str):
     return charactor
 
 def chatbot(message):
-    chat = ChatOpenAI(temperature=0.0)
     profile = read_botset('botset.json')
 
     full_prompt_str = template.format(**profile)
     prompt_template = PromptTemplate(
-        input_variables=["message", "conversation", "history"],
+        input_variables=["message", "conversation", "chat_history"],
         template=full_prompt_str
     )
 
+    roleAI = profile["roleAI"] 
+    roleHuman = profile["roleHuman"] 
+    history_list.append(f'{roleHuman}:{message}')
+
     loader = TextLoader('ChatHistory.txt')
     documents = loader.load()
-    print (f'You have {len(documents)} document(s) in your data')
-    print (f'There are {len(documents[0].page_content)} characters in your document')
-
+    # print (f'You have {len(documents)} document(s) in your data')
+    # print (f'There are {len(documents[0].page_content)} characters in your document')
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=200, chunk_overlap=20)
     docs = text_splitter.split_documents(documents)
-    print (f'Now you have {len(docs)} documents')
+    # print (f'Now you have {len(docs)} documents')
 
     embeddings = OpenAIEmbeddings(openai_api_key=api_key)
 
@@ -84,27 +92,29 @@ def chatbot(message):
         url=QDRANT_URL,
         prefer_grpc=True,
         api_key=QDRANT_API_KEY,
-        collection_name="chat_history",
+        collection_name="chat_conversation",
     )
     
-    chain = LLMChain(
-        llm=chat, 
+    chat_chain = LLMChain(
+        llm=ChatOpenAI(temperature=0.0), 
         prompt=prompt_template, 
         verbose=True,
-        memory=ConversationBufferWindowMemory(k=4,memory_key="history",input_key="message"),
+        memory=ConversationBufferWindowMemory(k=4, input_key="message"),
     )
 
     relevant_docs = qdrant.similarity_search(query=message, k=4)
-    print("Relevant docs:", relevant_docs)
     conversation ='\n'.join(["Conversation "+str(i+1) +": \n"+ doc.page_content for i,doc in enumerate(relevant_docs)])
-    print("Conversation:", conversation)
           
-    # response = chain.run({"message":message, "conversation":conversation})
-    response = chain.predict(
-        message=message, 
-        conversation=conversation)
+    history = '\n'.join(history_list)
 
-    # print(chain.memory.buffer)
+    response = chat_chain.run(
+        {"message":message, 
+         "conversation":conversation,
+         "chat_history":history
+    })
+
+    history_list.append(f'{roleAI}:{response}')
+
     return response
 
 def remove_punctuation_before_emojis(text):
