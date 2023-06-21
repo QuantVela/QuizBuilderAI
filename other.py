@@ -18,7 +18,7 @@ from typing import List, Sequence
 import os
 import orjson
 
-api_key  = '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'
+api_key  = 'xxx'
 os.environ["OPENAI_API_KEY"] = api_key
 
 render_tpl= """
