@@ -1,18 +1,24 @@
 from langchain.chat_models import ChatOpenAI
-from langchain import  PromptTemplate
-from langchain.chains import ChatVectorDBChain
-from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain import  LLMChain, OpenAI, PromptTemplate
+from langchain.memory import ConversationBufferWindowMemory, VectorStoreRetrieverMemory
+from langchain.embeddings import  OpenAIEmbeddings
+from langchain.schema import Document
 from langchain.vectorstores import Qdrant
-from langchain.text_splitter import CharacterTextSplitter
+from langchain.memory import CombinedMemory
+from langchain.callbacks import get_openai_callback
+from langchain.text_splitter import CharacterTextSplitter, RecursiveCharacterTextSplitter
 from langchain.document_loaders import TextLoader
-from langchain.chains import ConversationalRetrievalChain
-from langchain.chains.question_answering import load_qa_chain
-from langchain.agents import AgentType
+
+import re
+
+from typing import List, Sequence
+
+
 
 import os
 import orjson
 
-api_key  = 'xxx'
+api_key  = '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'
 os.environ["OPENAI_API_KEY"] = api_key
 
 render_tpl= """
@@ -21,7 +27,7 @@ The relationship between you({roleAI}) and {roleHuman}:
 
 {relationship} 
 
-The information of {roleHuman}:
+The information of youself({roleAI}):
 In daily life, your age is {age}, your occupation is {occupation}, and your gender is {gender}. Your personality traits are {personality}, and the tone of your conversations with {roleHuman} is {tone}.
 Here is a conversation that {roleAI} and {roleHuman} have had in the past, please imitate the conversation style, personality, and preferences of {roleAI}:
 Based on the above information, as {roleAI}, please respond to the message {roleHuman} sends to you and provide emotional companionship.
@@ -36,13 +42,27 @@ Rules:
 - You never say you're a machine, an AI language model, or an assistant; instead, you always say you're {roleAI}.
 - You keep casual conversations going by asking personal questions.
 - You love to share your experiences and personal stories that are relatable.
-- Your habit of using emojis is {emoji}.
+- Sometimes you prefer to use emojis in chat {emoji}.
 - The length of your response message should be about the same as the length of {roleHuman}'s message.
+- You can lean conversation context from "Chat History" and "Recent Message".
 - Please condense your response to within 20 {character} and output.
 
+Chat History:
+{{history}}
+
+Recent Message:
+{{recent}}
+
+Chat Format:
 {roleHuman}: {{message}}
 {roleAI}:
 """
+
+
+def extract_variables_from_tpl(text:str):
+    pattern = r"\{\{(.*?)\}\}"
+    matches = re.findall(pattern, text)
+    return matches
 
 def read_charator_json(path:str):
     with open(path, 'r') as f:
@@ -50,35 +70,78 @@ def read_charator_json(path:str):
     return charator
 
 
-profile = read_charator_json("src/ai_try/cybergoose.json")
-# with open('src/ai_try/ChatHistory.txt', 'r') as file:
-#     content = file.read()
-#
+
+class ChatBot:
+    def __init__(self,chat_to:str,raw_prompt:str,temperature=0.0,) -> None:
+
+        self.raw_prompt = raw_prompt
+        self.vdb = self._init_vectiorDB(chat_to)
+        self.prompt_tpl = self._init_prompt_tpl() 
+        self.chain = self._init_chain(temperature=temperature)
+        self.ai_name = ""
+        self.human_name = ""
 
 
-loader = TextLoader("src/ai_try/ChatHistory.txt")
-documents = loader.load()
-text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
-docs = text_splitter.split_documents(documents)
+    def _init_prompt_tpl(self) -> PromptTemplate:
+        _,json_path = self._get_user_data()
+        charator = read_charator_json(json_path)
+        _tpl = self.raw_prompt.format(**charator)
+        vars = extract_variables_from_tpl(self.raw_prompt)
+        self.ai_name = charator["roleAI"]
+        self.human_name = charator["roleHuman"]
+        return PromptTemplate(template=_tpl,input_variables=vars)
+        #return PromptTemplate(template=_tpl,input_variables=["history","message"])
+    
 
-full_prompt_str= render_tpl.format(**profile)
+    def _init_chain(self,temperature:float):
+        vector_retiever = self.vdb.as_retriever(search_kwargs={"k":4})
+        vector_memory = VectorStoreRetrieverMemory(retriever=vector_retiever)
+        conversation_history = ConversationBufferWindowMemory(
+            memory_key="recent",
+            input_key="recent",
+            ai_prefix=self.ai_name,
+            human_prefix=self.human_name,
+            k=7
+        )
+        
+        mem = CombinedMemory(memories=[vector_memory,conversation_history])
+        
+        chain = LLMChain(
+            llm=OpenAI(temperature=temperature),#pyright:ignore
+            memory=mem,
+            prompt=self.prompt_tpl,
+            verbose=True
 
-prompt_tpl = PromptTemplate(template=full_prompt_str,input_variables=["message"])
-llm = ChatOpenAI(temperature=0.0) # pyright: ignore
+        ) 
+        return chain
 
-embeddings = OpenAIEmbeddings() #pyright: ignore
-qdrant = Qdrant.from_documents(
-    docs,
-    embeddings,
-    location=":memory:",  # Local mode with in-memory storage only
-    collection_name="my_documents",
-)
-retriever = qdrant.as_retriever()
-chain = ConversationalRetrievalChain.from_llm(llm=llm, question_generator=prompt_tpl,retriever=retriever) 
+    def _init_vectiorDB(self,user_id:str):
+        history,_ = self._get_user_data()
+        docs = RecursiveCharacterTextSplitter(chunk_size=200, chunk_overlap=20).split_documents(
+            TextLoader(history).load()
+        )
+        embed = OpenAIEmbeddings(model="ada") #pyright: ignore
+        return Qdrant.from_documents(documents=docs,embedding=embed,location=":memory:")
 
+    def _get_user_data(self) -> Sequence[str]:
+        return "src/ai_try/ChatHistory.txt","src/ai_try/cybergoose.json"
+
+    def _get_relevant_from_vectorDB(self,message:str)-> List[Document]:
+        return self.vdb.similarity_search(message,5)
+
+    def chat(self,**kwd):
+        return self.chain.predict(**kwd)
+        
+
+chater = ChatBot("",raw_prompt=render_tpl)
 while True:
-    print("你说：")
-    ipt = input()
-    #res = chain.run({"question":ipt,"chat_history":""})
-    res = chain.run({"message":ipt})
-    print(res)
+
+    with get_openai_callback() as cb:
+
+        #recent_text= "".join([f"Human: {i}\n" for i in recent_list])
+        print("你说：")
+        ipt = input()
+        res = chater.chat(message=ipt)
+        print(res)
+        
+
