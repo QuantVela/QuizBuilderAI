@@ -1,13 +1,12 @@
-from langchain.chat_models import ChatOpenAI
 from langchain import  LLMChain, OpenAI, PromptTemplate
-from langchain.memory import ConversationBufferWindowMemory, VectorStoreRetrieverMemory
+from langchain.memory import ConversationBufferWindowMemory, VectorStoreRetrieverMemory,CombinedMemory
 from langchain.embeddings import  OpenAIEmbeddings
 from langchain.schema import Document
 from langchain.vectorstores import Qdrant
-from langchain.memory import CombinedMemory
 from langchain.callbacks import get_openai_callback
-from langchain.text_splitter import CharacterTextSplitter, RecursiveCharacterTextSplitter
+from langchain.text_splitter import  RecursiveCharacterTextSplitter
 from langchain.document_loaders import TextLoader
+from langchain.callbacks.base import BaseCallbackHandler
 
 import re
 
@@ -44,20 +43,24 @@ Rules:
 - You love to share your experiences and personal stories that are relatable.
 - Sometimes you prefer to use emojis in chat {emoji}.
 - The length of your response message should be about the same as the length of {roleHuman}'s message.
-- You can lean conversation context from "Chat History" and "Recent Message".
+- You can learn conversation context from "Chat History" and "Recent Chat History".
 - Please condense your response to within 20 {character} and output.
+- Chat History is real conversation bewteen {roleAI} and {roleHuman}
+- Recent Chat History is the lastst messages {roleHuman} sent to {roleAI}
 
 Chat History:
 {{history}}
 
-Recent Message:
+Recent Chat History:
 {{recent}}
 
-Chat Format:
-{roleHuman}: {{message}}
+{roleHuman}:{{message}}
 {roleAI}:
 """
 
+
+"""
+"""
 
 def extract_variables_from_tpl(text:str):
     pattern = r"\{\{(.*?)\}\}"
@@ -90,21 +93,21 @@ class ChatBot:
         self.ai_name = charator["roleAI"]
         self.human_name = charator["roleHuman"]
         return PromptTemplate(template=_tpl,input_variables=vars)
-        #return PromptTemplate(template=_tpl,input_variables=["history","message"])
     
 
     def _init_chain(self,temperature:float):
-        vector_retiever = self.vdb.as_retriever(search_kwargs={"k":4})
+        vector_retiever = self.vdb.as_retriever(search_kwargs={"k":3})
         vector_memory = VectorStoreRetrieverMemory(retriever=vector_retiever)
-        conversation_history = ConversationBufferWindowMemory(
+        conversation_history_memory = ConversationBufferWindowMemory(
+            input_key="message",
             memory_key="recent",
-            input_key="recent",
             ai_prefix=self.ai_name,
             human_prefix=self.human_name,
-            k=7
+            k=3
         )
+     
         
-        mem = CombinedMemory(memories=[vector_memory,conversation_history])
+        mem = CombinedMemory(memories=[vector_memory,conversation_history_memory])
         
         chain = LLMChain(
             llm=OpenAI(temperature=temperature),#pyright:ignore
@@ -112,7 +115,8 @@ class ChatBot:
             prompt=self.prompt_tpl,
             verbose=True
 
-        ) 
+        )
+   
         return chain
 
     def _init_vectiorDB(self,user_id:str):
@@ -120,7 +124,7 @@ class ChatBot:
         docs = RecursiveCharacterTextSplitter(chunk_size=200, chunk_overlap=20).split_documents(
             TextLoader(history).load()
         )
-        embed = OpenAIEmbeddings(model="ada") #pyright: ignore
+        embed = OpenAIEmbeddings() #pyright: ignore
         return Qdrant.from_documents(documents=docs,embedding=embed,location=":memory:")
 
     def _get_user_data(self) -> Sequence[str]:
