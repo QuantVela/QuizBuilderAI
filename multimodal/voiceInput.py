@@ -9,7 +9,7 @@ import re
 openai.api_key = "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"
 
 def speech_to_text():
-    audio_file= open("audio/mia.wav", "rb") #To do: 客户端需换成用户输入的语音
+    audio_file= open("../audio/mia.wav", "rb") #To do: 客户端需换成用户输入的语音
     transcript = openai.Audio.transcribe("whisper-1", audio_file, prompt="使用简体中文")
     result = json.dumps(transcript.text, ensure_ascii=False)
     result = result[1:-1] if result[0] == result[-1] == "\"" else result
