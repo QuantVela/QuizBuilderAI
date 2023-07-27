@@ -1,0 +1,3 @@
+[submodule "src/micio"]
+	path = src/micio
+	url = git@github.com:HJFG/micio.git
