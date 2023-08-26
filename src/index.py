@@ -1,62 +1,48 @@
-import os
-import logging
-from utils.processors import filter_file
-from utils.urlProcessors import filter_web
-from models.settings import common_dependencies, Settings
-from models.files import File
-from models.urls import Url
-from utils.vectors import VectorManager
-from utils.chatProcessors import filter_chat
-from loaders.dc import process_discord, load_data
+import discord
+from discord.ext import commands
+import aiohttp
+from gotrue import AsyncGoTrueClient
+from gotrue import SignInWithOAuthCredentials
+from dotenv import load_dotenv
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+load_dotenv()
 
-settings = Settings()
-token = settings.discord_token
+intents = discord.Intents.default()
+intents.message_content = True
+bot = commands.Bot(command_prefix='/', intents=intents)
 
-commons = common_dependencies()
-vector_manager = VectorManager(commons=commons)
-bot = commons["bot"]
+
+
+
+token = "eyJhbGciOiJIUzI1NiIsImtpZCI6IjYrcEVyMWFwT1JJOFF2emkiLCJ0eXAiOiJKV1QifQ.eyJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNjkyMDk1MjM0LCJpYXQiOjE2OTIwOTE2MzQsImlzcyI6Imh0dHBzOi8vaW1mZmZvZHJheW5mYWFqbmN5ZmIuc3VwYWJhc2UuY28vYXV0aC92MSIsInN1YiI6ImVhYTU2YjMzLTkwZmUtNGE2Ni04ZTM1LTg3NWNkMjMwYzZjOSIsImVtYWlsIjoiaGhoaG91anVlQGdtYWlsLmNvbSIsInBob25lIjoiIiwiYXBwX21ldGFkYXRhIjp7InByb3ZpZGVyIjoiZW1haWwiLCJwcm92aWRlcnMiOlsiZW1haWwiXX0sInVzZXJfbWV0YWRhdGEiOnt9LCJyb2xlIjoiYXV0aGVudGljYXRlZCIsImFhbCI6ImFhbDEiLCJhbXIiOlt7Im1ldGhvZCI6InBhc3N3b3JkIiwidGltZXN0YW1wIjoxNjkyMDkxNjM0fV0sInNlc3Npb25faWQiOiI3ZGUzZmMwMy1mODFjLTRhZmEtOTEyNS1iYjQ3ODI4OWFiNGMifQ.lPiADU6Q5BRq_igQJv6QaHAiYyU4tFE5rgecE72ZlkI"
 
 @bot.command()
-async def upload_and_ask(ctx, *, question):
-    if ctx.message.attachments:
-        for attachment in ctx.message.attachments:
-            file_path = os.path.join('uploads', attachment.filename)
-            await attachment.save(fp=file_path)   
-            file = File(file=attachment) 
-            msg = await filter_file(file, vector_manager)  
-            # msg = await filter_chat(file, vector_manager, "telegram") 
-            print(msg)  
-            search_result = vector_manager.match_finder(question, top_k=3)
-
-            # Reply with the search result
-            await ctx.send(search_result)
-            if os.path.isfile(file_path):
-                os.remove(file_path)
-    else:
-        await ctx.send("Please upload a PDF with your question.")
-
-@bot.command()
-async def crawl(ctx, input_url: str):
-    url = Url(url=input_url)
-    web_result = await filter_web(url, vector_manager, "web")
-    print(web_result)
-    search_result = vector_manager.match_finder("撸毛博主常见的误区?", top_k=3)
-    await ctx.send(search_result)
-
-@bot.command()
-async def history(ctx, *, question: str):
-    # res = await load_data(bot, ctx)
-    # print(res)
-    message = await process_discord()
-    print(message)
-    search_result = vector_manager.match_finder(question, top_k=3)
-    await ctx.send(search_result)
-
-bot.run(token)
+async def file(ctx):
+    file = ctx.message.attachments[0]
+    assert isinstance(file,discord.Attachment)
+    
+    async with AsyncGoTrueClient() as client:
+        sign = SignInWithOAuthCredentials(provider="discord")
+        result = await client.sign_in_with_oauth(sign)
+    
+    handler_url = "http://127.0.0.1:8000/file"
+    payload = {
+        "token":token,
+        "url":file.url,
+        "user_id":str(ctx.author.id),
+        "filename":file.filename,
+        "filesize":int(file.size),
+        "mime_type":str(file.content_type),
+        "upload":True
+    }
+    
+    async with aiohttp.ClientSession() as session:
+        result = await session.post(url=handler_url,json=payload)
+        if result.status != 200:
+            await ctx.send("error in your upload file")
+            return
+        
+    await ctx.send("file upload Done, You can ask me about this file later")
 
 
-
-
+bot.run(token="MTEyNzE4MTQ5ODIwNjkxNjYzOA.G79C-H.nencJA36EBQ-qTdM4OmN8Eisu5xMG73EYHSgEo")

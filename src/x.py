@@ -1,6 +1,3 @@
-def vector_manager():
-    ...
-
 from pydantic import  BaseModel, BaseSettings, Field,root_validator
 from abc import ABC, abstractmethod
 from typing import Optional,Any,Dict,Type
@@ -8,7 +5,8 @@ from uuid import UUID
 from discord import Attachment
 from aiosupabase import Supabase, SupabaseAPI
 import warnings
-from micio import micio
+
+
 
 
 GENTLE_WARNING = (
@@ -72,7 +70,7 @@ class Text(FileLike):
     ...
 
     
-class LinkedConent(BaseMedia):
+class LinkedContent(BaseMedia):
     ...
 
 class Pdf(FileLike):
@@ -92,7 +90,6 @@ class Settings(BaseSettings):
 
 
 
-
 class VecData(BaseModel):
     '''Fuck you langchain you made dev experience like a shit'''
     
@@ -105,9 +102,27 @@ class VecData(BaseModel):
         warnings.warn(GENTLE_WARNING)
         return self.content
     
+    @classmethod
+    def create_from_pdf(cls):
+        ...
+    
+    @classmethod
+    def create_from_text(cls):
+        ...
+     
+class DiscordVector(VecData):
+
+    @classmethod
+    def create_from_attchment(cls,attchment:Attachment):
+        kls = create_file_loader(attchment.filename)
+        kls().gen_vectors()
+    
+    @classmethod
+    def create_from_msg(cls,msg:str):
+        ...
+       
 
 Document = VecData
-
 
 
 
@@ -125,8 +140,6 @@ class FlexingFragments(BaseModel):
         return cls(
             supabase=Supabase
         )
-    
-ff = FlexingFragments.create_reflex()
 
 def create_file_loader(filename:str)->Type[BaseMedia]:
     match filename:
